@@ -1,4 +1,4 @@
-module Lotto_Server
+module lotto_server
 
 go 1.23.3
 
