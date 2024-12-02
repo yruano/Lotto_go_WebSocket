@@ -3,15 +3,15 @@ package component
 import (
 	cryptoRand "crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"log"
 	mathRand "math/rand"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
-
-const updateInterval = 10 * time.Second // 예: 10초로 설정
 
 // WebSocket 업그레이더 설정
 var upgrader = websocket.Upgrader{
@@ -52,82 +52,43 @@ func generateRandomArray(seed uint64) []int {
 	return randomArray
 }
 
-// WebSocket 연결 처리
-func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+// handleConnections handles WebSocket requests from clients
+func HandleRandomGeneration(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		fmt.Println("WebSocket 업그레이드 실패:", err)
+		log.Println("Error upgrading connection:", err)
 		return
 	}
+	defer conn.Close()
 
-	clients[conn] = true
-	fmt.Println("클라이언트 연결:", conn.RemoteAddr())
+	log.Println("Client connected")
 
-	defer func() {
-		conn.Close()
-		delete(clients, conn)
-		fmt.Println("클라이언트 연결 종료:", conn.RemoteAddr())
-	}()
-
-	// 초기 데이터 전송
-	seed, err := generateSeed()
-	if err != nil {
-		fmt.Println("난수 생성 실패:", err)
-		return
-	}
-
-	randomArray := generateRandomArray(seed)
-	message := fmt.Sprintf("%v", randomArray)
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
-		fmt.Println("초기 데이터 전송 실패:", err)
-		return
-	}
-
-	// 메시지 수신 처리
 	for {
+		// Read message from the client
 		_, _, err := conn.ReadMessage()
 		if err != nil {
-			fmt.Println("메시지 읽기 실패:", err)
+			log.Println("Error reading message:", err)
 			break
 		}
-	}
-}
 
-// 브로드캐스트 데이터 갱신
-func BroadcastUpdates() {
-	for {
-		// 새로운 시드와 배열 생성
+		// 초기 데이터 전송
 		seed, err := generateSeed()
 		if err != nil {
-			fmt.Println("데이터 생성 실패:", err)
-			continue
+			fmt.Println("난수 생성 실패:", err)
+			return
 		}
 
 		randomArray := generateRandomArray(seed)
-		broadcast <- randomArray
-		time.Sleep(updateInterval)
-	}
-}
+		response, err := json.Marshal(randomArray)
+		if err != nil {
+			log.Println("Error marshaling JSON:", err)
+			break
+		}
 
-// 클라이언트에게 데이터 브로드캐스트
-func HandleBroadcast() {
-	for randomArray := range broadcast {
-		message := fmt.Sprintf("%v", randomArray) // 배열을 문자열로 변환
-		for client := range clients {
-			if client != nil {
-				if err := client.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
-					fmt.Println("데이터 전송 실패:", err)
-					client.Close()
-					delete(clients, client) // 연결 제거
-				}
-			}
+		err = conn.WriteMessage(websocket.TextMessage, response)
+		if err != nil {
+			log.Println("Error writing message:", err)
+			break
 		}
 	}
-}
-
-func HandleShutdown() {
-  for client := range clients {
-    client.Close()
-    delete(clients, client)
-  }
 }
